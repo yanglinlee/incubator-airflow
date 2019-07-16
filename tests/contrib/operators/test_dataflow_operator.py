@@ -25,14 +25,7 @@ from airflow.contrib.operators.dataflow_operator import \
     DataflowTemplateOperator, GoogleCloudBucketHelper
 
 from airflow.version import version
-
-try:
-    from unittest import mock
-except ImportError:
-    try:
-        import mock
-    except ImportError:
-        mock = None
+from tests.compat import mock
 
 
 TASK_ID = 'test-dataflow-operator'
@@ -213,7 +206,7 @@ class GoogleCloudBucketHelperTest(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             gcs_bucket_helper.google_cloud_to_local(file_name)
 
-        self.assertEquals(
+        self.assertEqual(
             'Invalid Google Cloud Storage (GCS) object path: {}'.format(file_name),
             str(context.exception))
 
@@ -228,6 +221,7 @@ class GoogleCloudBucketHelperTest(unittest.TestCase):
         gcs_bucket_helper = GoogleCloudBucketHelper()
         gcs_bucket_helper._gcs_hook = mock.Mock()
 
+        # pylint:disable=redefined-builtin,unused-argument
         def _mock_download(bucket, object, filename=None):
             text_file_contents = 'text file contents'
             with open(filename, 'w') as text_file:
@@ -250,6 +244,7 @@ class GoogleCloudBucketHelperTest(unittest.TestCase):
         gcs_bucket_helper = GoogleCloudBucketHelper()
         gcs_bucket_helper._gcs_hook = mock.Mock()
 
+        # pylint:disable=redefined-builtin,unused-argument
         def _mock_download(bucket, object, filename=None):
             text_file_contents = ''
             with open(filename, 'w') as text_file:
@@ -261,6 +256,6 @@ class GoogleCloudBucketHelperTest(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             gcs_bucket_helper.google_cloud_to_local(file_name)
 
-        self.assertEquals(
+        self.assertEqual(
             'Failed to download Google Cloud Storage (GCS) object: {}'.format(file_name),
             str(context.exception))

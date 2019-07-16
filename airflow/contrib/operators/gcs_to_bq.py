@@ -16,15 +16,20 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""
+This module contains a Google Cloud Storage to BigQuery operator.
+"""
 
 import json
 
+from airflow import AirflowException
 from airflow.contrib.hooks.gcs_hook import GoogleCloudStorageHook
 from airflow.contrib.hooks.bigquery_hook import BigQueryHook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 
 
+# pylint: disable=too-many-instance-attributes
 class GoogleCloudStorageToBigQueryOperator(BaseOperator):
     """
     Loads files from Google cloud storage into BigQuery.
@@ -34,21 +39,28 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
     point the operator to a Google cloud storage object name. The object in
     Google cloud storage must be a JSON file with the schema fields in it.
 
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:GoogleCloudStorageToBigQueryOperator`
+
     :param bucket: The bucket to load from. (templated)
     :type bucket: str
     :param source_objects: List of Google cloud storage URIs to load from. (templated)
         If source_format is 'DATASTORE_BACKUP', the list must only contain a single URI.
-    :type source_objects: list of str
-    :param destination_project_dataset_table: The dotted (<project>.)<dataset>.<table>
-        BigQuery table to load data into. If <project> is not included,
-        project will be the project defined in the connection json. (templated)
+    :type source_objects: list[str]
+    :param destination_project_dataset_table: The dotted
+        ``(<project>.|<project>:)<dataset>.<table>`` BigQuery table to load data into.
+        If ``<project>`` is not included, project will be the project defined in
+        the connection json. (templated)
     :type destination_project_dataset_table: str
     :param schema_fields: If set, the schema field list as defined here:
         https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.load
         Should not be set when source_format is 'DATASTORE_BACKUP'.
+        Parameter must be defined if 'schema_object' is null and autodetect is False.
     :type schema_fields: list
     :param schema_object: If set, a GCS object path pointing to a .json file that
         contains the schema for the table. (templated)
+        Parameter must be defined if 'schema_fields' is null and autodetect is False.
     :type schema_object: str
     :param source_format: File format to export.
     :type source_format: str
@@ -118,13 +130,19 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
         by one or more columns. This is only available in conjunction with
         time_partitioning. The order of columns given determines the sort order.
         Not applicable for external tables.
-    :type cluster_fields: list of str
+    :type cluster_fields: list[str]
+    :param autodetect: [Optional] Indicates if we should automatically infer the
+        options and schema for CSV and JSON sources. (Default: ``False``).
+        Parameter must be setted to True if 'schema_fields' and 'schema_object' are undefined.
+        It is suggested to set to True if table are create outside of Airflow.
+    :type autodetect: bool
     """
     template_fields = ('bucket', 'source_objects',
                        'schema_object', 'destination_project_dataset_table')
     template_ext = ('.sql',)
     ui_color = '#f0eee4'
 
+    # pylint: disable=too-many-locals,too-many-arguments
     @apply_defaults
     def __init__(self,
                  bucket,
@@ -144,7 +162,7 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
                  allow_quoted_newlines=False,
                  allow_jagged_rows=False,
                  max_id_key=None,
-                 bigquery_conn_id='bigquery_default',
+                 bigquery_conn_id='google_cloud_default',
                  google_cloud_storage_conn_id='google_cloud_default',
                  delegate_to=None,
                  schema_update_options=(),
@@ -152,9 +170,10 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
                  external_table=False,
                  time_partitioning=None,
                  cluster_fields=None,
+                 autodetect=False,
                  *args, **kwargs):
 
-        super(GoogleCloudStorageToBigQueryOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         # GCS config
         if src_fmt_configs is None:
@@ -190,20 +209,26 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
         self.src_fmt_configs = src_fmt_configs
         self.time_partitioning = time_partitioning
         self.cluster_fields = cluster_fields
+        self.autodetect = autodetect
 
     def execute(self, context):
         bq_hook = BigQueryHook(bigquery_conn_id=self.bigquery_conn_id,
                                delegate_to=self.delegate_to)
 
-        if not self.schema_fields and \
-                self.schema_object and \
-                self.source_format != 'DATASTORE_BACKUP':
-            gcs_hook = GoogleCloudStorageHook(
-                google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
-                delegate_to=self.delegate_to)
-            schema_fields = json.loads(gcs_hook.download(
-                self.bucket,
-                self.schema_object).decode("utf-8"))
+        if not self.schema_fields:
+            if self.schema_object and self.source_format != 'DATASTORE_BACKUP':
+                gcs_hook = GoogleCloudStorageHook(
+                    google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
+                    delegate_to=self.delegate_to)
+                schema_fields = json.loads(gcs_hook.download(
+                    self.bucket,
+                    self.schema_object).decode("utf-8"))
+            elif self.schema_object is None and self.autodetect is False:
+                raise AirflowException('At least one of `schema_fields`, '
+                                       '`schema_object`, or `autodetect` must be passed.')
+            else:
+                schema_fields = None
+
         else:
             schema_fields = self.schema_fields
 
@@ -234,6 +259,7 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
                 schema_fields=schema_fields,
                 source_uris=source_uris,
                 source_format=self.source_format,
+                autodetect=self.autodetect,
                 create_disposition=self.create_disposition,
                 skip_leading_rows=self.skip_leading_rows,
                 write_disposition=self.write_disposition,
@@ -258,4 +284,3 @@ class GoogleCloudStorageToBigQueryOperator(BaseOperator):
                 'Loaded BQ data with max %s.%s=%s',
                 self.destination_project_dataset_table, self.max_id_key, max_id
             )
-            return max_id

@@ -13,10 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+This module contains a Google ML Engine Hook.
+"""
+
 import random
 import time
-from apiclient import errors
-from apiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.discovery import build
 
 from airflow.contrib.hooks.gcp_api_base_hook import GoogleCloudBaseHook
 from airflow.utils.log.logging_mixin import LoggingMixin
@@ -32,22 +36,30 @@ def _poll_with_exponential_delay(request, max_n, is_done_func, is_error_func):
                 raise ValueError(
                     'The response contained an error: {}'.format(response)
                 )
-            elif is_done_func(response):
+            if is_done_func(response):
                 log.info('Operation is done: %s', response)
                 return response
-            else:
-                time.sleep((2**i) + (random.randint(0, 1000) / 1000))
-        except errors.HttpError as e:
+
+            time.sleep((2**i) + (random.randint(0, 1000) / 1000))
+        except HttpError as e:
             if e.resp.status != 429:
                 log.info('Something went wrong. Not retrying: %s', format(e))
                 raise
             else:
                 time.sleep((2**i) + (random.randint(0, 1000) / 1000))
 
+    raise ValueError('Connection could not be established after {} retries.'.format(max_n))
+
 
 class MLEngineHook(GoogleCloudBaseHook):
+    """
+    Hook for Google ML Engine APIs.
+
+    All the methods in the hook where project_id is used must be called with
+    keyword arguments rather than positional.
+    """
     def __init__(self, gcp_conn_id='google_cloud_default', delegate_to=None):
-        super(MLEngineHook, self).__init__(gcp_conn_id, delegate_to)
+        super().__init__(gcp_conn_id, delegate_to)
         self._mlengine = self.get_conn()
 
     def get_conn(self):
@@ -64,9 +76,9 @@ class MLEngineHook(GoogleCloudBaseHook):
         :param project_id: The Google Cloud project id within which MLEngine
             job will be launched.
         :type project_id: str
-
         :param job: MLEngine Job object that should be provided to the MLEngine
             API, such as: ::
+
                 {
                   'jobId': 'my_job_id',
                   'trainingInput': {
@@ -74,8 +86,8 @@ class MLEngineHook(GoogleCloudBaseHook):
                     ...
                   }
                 }
-        :type job: dict
 
+        :type job: dict
         :param use_existing_job_fn: In case that a MLEngine job with the same
             job_id already exist, this method (if provided) will decide whether
             we should use this existing job, continue waiting for it to finish
@@ -84,19 +96,18 @@ class MLEngineHook(GoogleCloudBaseHook):
             reuse the existing job. If 'use_existing_job_fn' is not provided,
             we by default reuse the existing MLEngine job.
         :type use_existing_job_fn: function
-
         :return: The MLEngine job object if the job successfully reach a
             terminal state (which might be FAILED or CANCELLED state).
         :rtype: dict
         """
-        request = self._mlengine.projects().jobs().create(
+        request = self._mlengine.projects().jobs().create(  # pylint: disable=no-member
             parent='projects/{}'.format(project_id),
             body=job)
         job_id = job['jobId']
 
         try:
             request.execute()
-        except errors.HttpError as e:
+        except HttpError as e:
             # 409 means there is an existing job with the same job ID.
             if e.resp.status == 409:
                 if use_existing_job_fn is not None:
@@ -124,16 +135,14 @@ class MLEngineHook(GoogleCloudBaseHook):
 
         :return: MLEngine job object if succeed.
         :rtype: dict
-
-        Raises:
-            apiclient.errors.HttpError: if HTTP error is returned from server
+        :raises: googleapiclient.errors.HttpError
         """
         job_name = 'projects/{}/jobs/{}'.format(project_id, job_id)
-        request = self._mlengine.projects().jobs().get(name=job_name)
+        request = self._mlengine.projects().jobs().get(name=job_name)  # pylint: disable=no-member
         while True:
             try:
                 return request.execute()
-            except errors.HttpError as e:
+            except HttpError as e:
                 if e.resp.status == 429:
                     # polling after 30 seconds when quota failure occurs
                     time.sleep(30)
@@ -147,10 +156,7 @@ class MLEngineHook(GoogleCloudBaseHook):
 
         This method will periodically check the job state until the job reach
         a terminal state.
-
-        Raises:
-            apiclient.errors.HttpError: if HTTP error is returned when getting
-            the job
+        :raises: googleapiclient.errors.HttpError
         """
         if interval <= 0:
             raise ValueError("Interval must be > 0")
@@ -168,10 +174,10 @@ class MLEngineHook(GoogleCloudBaseHook):
         raises an error otherwise.
         """
         parent_name = 'projects/{}/models/{}'.format(project_id, model_name)
-        create_request = self._mlengine.projects().models().versions().create(
+        create_request = self._mlengine.projects().models().versions().create(  # pylint: disable=no-member
             parent=parent_name, body=version_spec)
         response = create_request.execute()
-        get_request = self._mlengine.projects().operations().get(
+        get_request = self._mlengine.projects().operations().get(  # pylint: disable=no-member
             name=response['name'])
 
         return _poll_with_exponential_delay(
@@ -186,14 +192,14 @@ class MLEngineHook(GoogleCloudBaseHook):
         """
         full_version_name = 'projects/{}/models/{}/versions/{}'.format(
             project_id, model_name, version_name)
-        request = self._mlengine.projects().models().versions().setDefault(
+        request = self._mlengine.projects().models().versions().setDefault(  # pylint: disable=no-member
             name=full_version_name, body={})
 
         try:
             response = request.execute()
             self.log.info('Successfully set version: %s to default', response)
             return response
-        except errors.HttpError as e:
+        except HttpError as e:
             self.log.error('Something went wrong: %s', e)
             raise
 
@@ -204,14 +210,14 @@ class MLEngineHook(GoogleCloudBaseHook):
         result = []
         full_parent_name = 'projects/{}/models/{}'.format(
             project_id, model_name)
-        request = self._mlengine.projects().models().versions().list(
+        request = self._mlengine.projects().models().versions().list(  # pylint: disable=no-member
             parent=full_parent_name, pageSize=100)
 
         response = request.execute()
         next_page_token = response.get('nextPageToken', None)
         result.extend(response.get('versions', []))
         while next_page_token is not None:
-            next_request = self._mlengine.projects().models().versions().list(
+            next_request = self._mlengine.projects().models().versions().list(  # pylint: disable=no-member
                 parent=full_parent_name,
                 pageToken=next_page_token,
                 pageSize=100)
@@ -227,10 +233,10 @@ class MLEngineHook(GoogleCloudBaseHook):
         """
         full_name = 'projects/{}/models/{}/versions/{}'.format(
             project_id, model_name, version_name)
-        delete_request = self._mlengine.projects().models().versions().delete(
+        delete_request = self._mlengine.projects().models().versions().delete(  # pylint: disable=no-member
             name=full_name)
         response = delete_request.execute()
-        get_request = self._mlengine.projects().operations().get(
+        get_request = self._mlengine.projects().operations().get(  # pylint: disable=no-member
             name=response['name'])
 
         return _poll_with_exponential_delay(
@@ -248,7 +254,7 @@ class MLEngineHook(GoogleCloudBaseHook):
                              "could not be an empty string")
         project = 'projects/{}'.format(project_id)
 
-        request = self._mlengine.projects().models().create(
+        request = self._mlengine.projects().models().create(  # pylint: disable=no-member
             parent=project, body=model)
         return request.execute()
 
@@ -261,10 +267,10 @@ class MLEngineHook(GoogleCloudBaseHook):
                              "it could not be an empty string")
         full_model_name = 'projects/{}/models/{}'.format(
             project_id, model_name)
-        request = self._mlengine.projects().models().get(name=full_model_name)
+        request = self._mlengine.projects().models().get(name=full_model_name)  # pylint: disable=no-member
         try:
             return request.execute()
-        except errors.HttpError as e:
+        except HttpError as e:
             if e.resp.status == 404:
                 self.log.error('Model was not found: %s', e)
                 return None

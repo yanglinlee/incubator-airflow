@@ -18,8 +18,8 @@
 # under the License.
 
 import unittest
+from unittest.mock import Mock
 from datetime import datetime
-from mock import Mock
 
 from airflow.models import DAG, BaseOperator
 from airflow.ti_deps.dep_context import DepContext
@@ -52,4 +52,3 @@ class TaskConcurrencyDepTest(unittest.TestCase):
         self.assertTrue(TaskConcurrencyDep().is_met(ti=ti, dep_context=dep_context))
         ti.get_num_running_task_instances = lambda x: 2
         self.assertFalse(TaskConcurrencyDep().is_met(ti=ti, dep_context=dep_context))
-
